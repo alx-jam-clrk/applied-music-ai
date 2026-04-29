@@ -13,3 +13,13 @@ venv/
 
 # Pytest cache
 .pytest_cache/
+
+# Environment variables (API keys)
+.env
+
+# Large dataset files
+data/spotify_tracks.csv
+data/*.parquet
+
+# User data
+data/users/

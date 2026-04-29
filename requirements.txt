@@ -1,3 +1,7 @@
 pandas
 pytest
 streamlit
+anthropic
+pyarrow
+python-dotenv
+numpy
