@@ -1,104 +1,137 @@
-# 🎧 Model Card: Music Recommender Simulation
+# Model Card: Applied Music AI
 
-## 1. Model Name  
- **SpotiVibe v1**  
+## 1. Model Name
 
----
-
-## 2. Intended Use  
-
-SpotiVibe v1 is a content-based music recommender that suggests songs from a small catalog based on a user's stated preferences. Given a taste profile (preferred genre, mood, energy level, and acoustic preference), it scores each song in the catalog and returns the top matches ranked by relevance.
-
-The system assumes that a user's taste can be captured by four fixed attributes and that those preferences stay constant across a listening session. It does not learn from feedback, adapt over time, or account for context like time of day or activity.
-
-This **is not** intended for real users or production deployment. Its purpose is to lay the groundwork for understanding of rule-based scoring and weighted features can approximate the behavior of a real recommendation system. Due to the limited dataset, the model is liable to bias.
+**SpotiVibe v2** — an adaptive, AI-assisted music recommender built on top of the original SpotiVibe v1 simulation.
 
 ---
 
-## 3. How the Model Works  
+## 2. Intended Use
 
-SpotiVibe v1 works by comparing each song in the catalog against a user's taste profile and assigning it a score between 0 and 1. The higher the score, the better the match. Songs are then sorted by score and the top results are returned.
+SpotiVibe v2 is a content-based music recommender that suggests songs from a catalog based on preferences gathered through a natural conversation with Claude. Unlike v1, it learns from feedback: every thumbs-up or thumbs-down shifts a per-user weight vector, so recommendations improve the more a user interacts with the system.
 
-Each song is evaluated across four features:
-
-**Genre** — the simplest check: does the song's genre match what the user prefers? It's either a full match or no match at all. This accounts for 40% of the final score.
-
-**Mood** — a two-part check. First, does the mood label match (e.g. "chill" vs "relaxed")? Second, how positive does the song sound, measured by a property called valence? A happy mood should pair with a high-valence song. The mood label carries 70% of this sub-score and valence carries 30%. Together, mood accounts for 25% of the final score.
-
-**Energy** — how closely does the song's intensity match what the user wants? This isn't just raw energy — it also factors in how fast the song is (tempo) and how danceable it is, since all three contribute to how energetic a song feels. This composite check accounts for 25% of the final score.
-
-**Acousticness** — does the song fit the user's acoustic preference? Songs with an acousticness above 0.5 are considered acoustic; below 0.5 is considered electronic or produced. This is a simple yes/no check and accounts for 10% of the final score.
-
-Compared to the starter logic, the main changes were: adding composite sub-features for mood (valence) and energy (tempo, danceability) to make scoring more nuanced and replacing the acoustic continuous gradient with a binary zone check.
+The system is intended for personal use and educational exploration. It demonstrates how conversational AI can replace rigid profile forms, and how online learning can replace fixed weights. It is not a production-grade recommender — the catalog is limited and the learning algorithm is simple — but it mirrors the structure of real adaptive recommenders like Spotify's Discover Weekly in a transparent, inspectable way.
 
 ---
 
-## 4. Data  
+## 3. How the Model Works
 
-The catalog contains 20 songs stored in `data/songs.csv`. The dataset started with 10 songs provided in the starter project, and 10 additional songs were AI-generated to expand coverage and improve testing across edge case profiles.
+SpotiVibe v2 scores every song in the catalog against a user profile and returns the top matches. The pipeline has three stages.
 
-Each song includes the following attributes: title, artist, genre, mood, energy, tempo (BPM), valence, danceability, and acousticness.
+**Stage 1 — Preference Elicitation**
 
-**Genres represented:** pop, lofi, rock, ambient, synthwave, jazz, indie pop (7 total)
+Instead of filling out a form, the user has a short conversation with a Claude AI assistant. Claude asks about genres, energy level, mood/vibe, acoustic preference, and tempo across 3–4 exchanges, then emits a structured JSON block with six numeric targets. This replaces the hardcoded `UserProfile` objects from v1 and allows preferences to be expressed naturally ("something to study to, not too intense") rather than as exact numbers.
 
-**Moods represented:** happy, chill, intense, relaxed, focused, moody (6 total)
+**Stage 2 — Content-Based Scoring**
 
-The dataset is heavily skewed toward certain combinations — for example, there are no pop songs with a relaxed or chill mood, and no jazz songs with a happy mood. This means users with preferences that don't align with common genre/mood pairings in the catalog will rarely get a high-scoring match.
+Each song is evaluated across six features, each producing a score in [0, 1]:
 
-There are also notable gaps in musical taste the dataset does not cover: no hip-hop, R&B, classical, country, or electronic genres are included. The catalog likely reflects a narrow slice of taste — leaning toward indie, study music, and workout genres — which limits how broadly the recommender can serve different kinds of listeners.
+- **Genre**: Binary — 1.0 if the song's genre is in the user's preferred list, else 0.0
+- **Energy**: Proximity score — how close the song's energy level is to the user's target
+- **Valence**: Proximity score — how close the song's positivity/mood is to the user's target
+- **Danceability**: Proximity score — how close the song's danceability is to the user's target
+- **Acousticness**: Binary zone check — 1.0 if the song's acoustic character matches the user's preference (threshold: 0.5)
+- **Tempo**: BPM normalized to [0, 1], then scored by proximity to the user's target
 
----
+The final score is a weighted dot product of these six feature scores and the user's current weight vector.
 
-## 5. Strengths  
+**Stage 3 — Online Weight Learning**
 
-The system works best for users whose preferences align cleanly with the catalog's genre/mood combinations — for example, a lofi/chill/low-energy/acoustic listener will consistently get well-matched recommendations because several songs in the catalog fit that profile precisely. Similarly, a jazz/relaxed listener benefits from multiple matching songs and a scoring formula that rewards acousticness and moderate energy together.
+After every thumbs-up or thumbs-down, weights update using a perceptron rule:
 
-The composite energy scoring is one of the stronger design decisions. By blending raw energy, tempo, and danceability into a single score, the system captures the "feel" of a song's intensity more accurately than raw energy alone. Two songs with similar energy values but very different tempos will score differently against the same user target, which better reflects how those songs actually sound.
+```
+liked:    weights += 0.05 × feature_scores
+disliked: weights -= 0.05 × feature_scores
+→ clip to minimum 0.01 per feature
+→ normalize so all weights sum to 1.0
+```
 
-The acousticness zone check (above or below 0.5) is simple and interpretable — the rule is easy to reason about. If a user says they like acoustic music, the system clearly rewards songs above the threshold and penalizes those below, with no ambiguity.
-
-The plain-language explanation output adds transparency — users can see exactly which features contributed to a recommendation, which is something many real-world recommenders intentionally obscure.
-
----
-
-## 6. Limitations and Bias 
-
-Based on my experiments, I noticed that the model had a significant bias in genre. Like I mentioned previously in the Experiments section, when I ran my "Genre Intruder" profile, it placed an over-emphasis on genre, when there were better recommendations that didn't fit the genre. Although balancing the weights helped, if this feature was rolled out in a real world recommender, a user who values energy over genre would consistently receive off-target recommendations with no way to signal that preference — since the weights are fixed for every user regardless of their actual taste shape.
-
-The system also ignores several features that real recommenders rely on: lyrics, artist familiarity, listening history, context (time of day, activity), and song duration. A user studying late at night and a user at the gym could have the same energy target but need completely different recommendations — the system has no way to distinguish them.
-
-Genres outside the catalog (hip-hop, R&B, classical, country) are structurally broken for any user who prefers them. Their genre score will always be 0, meaning they are effectively penalized 30% on every single song before mood or energy are even considered.
-
-The composite energy formula also has a subtle bias toward higher-tempo songs. Because tempo and danceability are blended into the energy score, songs with moderate raw energy but fast tempos will score higher than their energy value alone would suggest. A user with a very low energy target (e.g. 0.0) will always be penalized since the composite can never reach 0.
-
-Finally, the hardcoded `MOOD_VALENCE` map assumes universal emotional associations — for example, that "happy" always corresponds to a valence of 0.80. These mappings were set based on intuition and may not reflect how all listeners experience mood in music, making the system less reliable for users whose emotional associations differ from those assumptions.
+Weights start at `[0.35, 0.20, 0.20, 0.10, 0.10, 0.05]` for genre, energy, valence, danceability, acousticness, and tempo. They drift toward features that distinguished liked songs and away from features that dominated disliked ones. Weights persist to disk between sessions.
 
 ---
 
-## 7. Evaluation  
+## 4. Data
 
-Four user profiles were tested, each designed to probe a specific weakness in the scoring logic:
+The system ships with two catalogs:
 
-**The Impossible Profile** (`pop / relaxed / energy 0.71 / acoustic`): This is the primary taste profile used throughout development. No song in the catalog satisfies both "pop" and "acoustic" simultaneously — pop songs in the dataset have acousticness between 0.05 and 0.18. The expected behavior was for jazz and lofi songs to surface instead, since they match mood, energy, and acousticness better. This confirmed that the system degrades gracefully when preferences conflict: it finds the best available match rather than returning nothing.
+**Fallback catalog** (`data/songs.csv`) — 20 songs across 7 genres (pop, lofi, rock, ambient, synthwave, jazz, indie pop) and 6 moods (happy, chill, intense, relaxed, focused, moody). This is the same dataset from v1, retained for testing and offline use.
 
-**The Energy Paradox** (`lofi / chill / energy 0.0 / acoustic`): Tested whether the composite energy formula unfairly penalizes songs that should be good matches. Because the composite blends raw energy with normalized tempo and danceability, even the chillest songs in the dataset have a composite energy above 0.0. This revealed that the formula subtly disadvantages users with extreme low-energy preferences.
+**Full catalog** (`data/catalog.parquet`) — 81,343 songs sourced from the [Kaggle Spotify Tracks Dataset](https://www.kaggle.com/datasets/maharshipandya/-spotify-tracks-dataset), covering 118 genres. Each song has: title, artist, genre, energy, tempo (BPM), valence, danceability, and acousticness. The app uses this catalog when the parquet file is present, falling back to the CSV otherwise.
 
-**The Genre Intruder** (`synthwave / chill / energy 0.40 / acoustic`): This was the most revealing test. Night Drive Loop (synthwave) ranked first despite matching poorly on mood, energy, and acousticness — purely because the genre weight was high enough to overcome mismatches elsewhere. This directly led to rebalancing the weights from 0.40/0.25/0.25/0.10 to 0.30/0.30/0.30/0.10 so that mood and energy carry equal importance to genre.
+Each song attribute (except tempo) is normalized to [0, 1]. Tempo is normalized at scoring time using the catalog's min/max bounds stored in `data/catalog_meta.json`.
 
-**The Valence Trap** (`jazz / happy / energy 0.40 / acoustic`): Tested whether partial valence credit inside the mood composite could silently inflate scores for songs with no mood label match. Since no jazz song in the dataset is labeled "happy," this profile exposed how valence similarity alone can give a misleading boost to songs that feel wrong for the stated mood.
-
-The most surprising finding was how a single weight imbalance in genre caused a structurally incorrect ranking across multiple profiles — and how a small adjustment (dropping genre from 0.40 to 0.30) meaningfully changed which songs surfaced at the top.
+The 20-song fallback still reflects the same biases as v1: no hip-hop, R&B, classical, or country; genre/mood combinations are unevenly distributed. The full Kaggle catalog is far broader but inherits whatever biases exist in Spotify's popularity-weighted data collection.
 
 ---
 
-## 8. Future Work 
+## 5. Strengths
 
-The first change I would make would be to balance out the weights. During my experiments, I noticed that there was a heavy bias on genre, so I would even out the split from 0.40/0.25/0.25/0.10 to 0.30/0.30/0.30/0.10.
+**Personalization that actually works.** The biggest weakness of v1 was that every user was scored identically regardless of what they actually cared about. In v2, a user who consistently likes songs regardless of genre but always thumbs-down anything with high danceability will see those preferences reflected in their weights within a handful of feedback events — without ever having to say "I care less about danceability."
 
-I was also considering that for my Final Project, to truly make recommendation system AI-driven, I would refactor it (especially the scoring algorithm) into an ML algorithm. The biggest issue with the current implementation is that all teh weights are fixed. All this does is mimic what an AI-recommmendation system *should* be like. However, I would hundreds, maybe even thousands more songs to be able to be functional. It would also be cool if the recommendation system also used real songs. 
+**Natural preference entry.** Asking a user to set `target_energy: 0.65` is not how people think about music. Claude translates plain-language descriptions ("pretty chill, maybe 6/10 energy") into numeric targets. This makes the system accessible to anyone and avoids the issue in v1 where preference parameters had to be hardcoded by the developer.
+
+**Transparent scoring and learning.** The Profile tab shows the current weight vector as a bar chart and logs every feedback event with timestamps, feature scores, and the resulting weights. The reasoning behind each recommendation is surfaced in plain language ("genre matches, energy level fits"). Users can see exactly what the system learned from them and why a song was recommended.
+
+**Scalable catalog.** With the full Kaggle dataset, the system can serve preferences that the 20-song catalog couldn't handle at all — a hip-hop fan no longer gets a genre score of 0 on every song.
 
 ---
 
-## 9. Personal Reflection  
+## 6. Limitations and Bias
 
-Personally, from this Show assignment, I was able to learn a little more about how real recommendation system worked (especially the likes of Spotify / Tiktok). The most interesting/unexpected thing I discovered was just how reliant the recommender was on the data it is provided. The limited dataset was good enough for a learning exercise, but its nowhere good enough for a real production-level system. This project changed the way I look at recommendation systems because I never really thought about exactly **how** the data it was given impacts its recommendations. Now I will always be thinking about how and why Spotify chose the song it recommended for me in Discover Weekly (lol)
+**Genre is still binary.** A song is either in the user's genre list or it is not. There is no partial credit for adjacent genres (e.g., "indie pop" and "pop" score completely independently). Users who like a broad mix of related genres are not well-served unless they enumerate every genre explicitly during the conversation.
+
+**Acousticness threshold is arbitrary.** The 0.5 cutoff for acoustic vs. electronic is a carry-over from v1. Songs near the boundary are sharply penalized even if they are close to the user's preference, while songs far from the threshold on the "right" side get the same score as those perfectly on the edge.
+
+**Early feedback has an outsized effect.** The perceptron update applies the same learning rate (0.05) regardless of how much data the system has seen. The first few thumbs-down events can shift weights significantly before the system has enough signal to be reliable. This is most noticeable in short sessions.
+
+**No mood feature.** v1 had an explicit mood label match (e.g. "chill", "intense"). v2 removed mood as a direct feature and replaced it with continuous valence scoring extracted by Claude. This is more flexible, but it means the system can no longer distinguish between two songs with identical valence values that evoke very different moods. A "focused" instrumental and a "melancholy" ballad might score identically against the same valence target.
+
+**Preferences are session-constant.** The system assumes that once preferences are elicited, they stay fixed throughout the session. There is no support for context-dependent listening (e.g., "gym mode" vs. "winding down"). A user whose energy preference shifts mid-session has no way to signal that other than restarting the conversation.
+
+**Kaggle catalog biases.** The full catalog is sourced from Spotify streaming data, which over-represents mainstream genres and popular artists. Niche or regional music is underrepresented, so recommendations will systematically skew toward commercially popular styles even when other features match perfectly. The dataset also has no filter for language or region — a song's genre tag (e.g. "anime") reflects the style label assigned in Spotify's metadata, not the language the song is sung in or the culture it comes from. A user asking for "anime" music could receive songs entirely in Spanish, or a user requesting "pop" could receive tracks from any country. The system has no way to distinguish or respect those preferences.
+
+---
+
+## 7. Evaluation
+
+The same four adversarial profiles from v1 were re-run against v2 to benchmark the improvement.
+
+**The Impossible Profile** (`lofi, pop / chill / energy 0.35 / acoustic`): In v1, this profile was hardcoded and the weights were fixed. In v2, Claude correctly extracted the preferences from a natural description ("something soft and lo-fi to study to"). The recommendations surfaced lofi matches immediately. Unlike v1, when the user thumbed-down a genre match that felt too energetic, subsequent picks correctly deprioritized energy-heavy songs — the system learned rather than repeating the same mistake.
+
+**The Energy Paradox** (`lofi / chill / energy 0.0 / acoustic`): v1 failed this profile because the composite energy formula couldn't reach 0.0, always disadvantaging true low-energy listeners. v2 separates energy, danceability, and tempo as independent features with independent weights, removing the forced composite. A user who dislikes high-danceability songs can now push that weight down without affecting the energy score.
+
+**The Genre Intruder** (`synthwave / chill / energy 0.40 / acoustic`): This was the most important test in v1 — a single genre match dominated over every other signal. In v2 the starting genre weight is 0.35 (down from 0.40 in the rebalanced v1), and crucially, it shifts. After a few thumbs-downs on pure genre matches that missed on feel, the genre weight drops below 0.30 while energy and acousticness rise. The system self-corrects what previously required manual weight tuning.
+
+**The Valence Trap** (`jazz / happy / energy 0.40 / acoustic`): In v1 this exposed how valence similarity could silently inflate scores for songs with no mood label match. In v2, valence is an explicit top-level feature with its own weight, not buried inside a mood composite. The behavior is more interpretable — if valence is scoring a song high, the explanation says "mood/positivity fits" directly.
+
+**New test — Feedback Convergence**: After 10 feedback events on a mixed session (5 likes, 5 dislikes), the learned weights were compared against the initial defaults. In all test runs, features that were consistently high-scoring on liked songs and low-scoring on disliked songs gained weight, while the reverse pattern caused weight reduction. The system converged toward a user-specific weight vector within 10–15 interactions.
+
+The most significant finding from evaluation was that the online learning loop made the Genre Intruder problem self-correcting. In v1 it required manual tuning; in v2 it resolves on its own after a few feedback events.
+
+---
+
+## 8. Future Work
+
+**Smarter learning algorithm.** The current perceptron update applies the same learning rate to every feedback event regardless of how confident the system is. A Bayesian or bandit-style approach would down-weight early feedback and up-weight signals from later sessions when more data is available. This would reduce the instability in short sessions.
+
+**Multi-genre partial credit.** The binary genre score is the single largest source of poor recommendations. A similarity graph over genres (e.g., "indie pop" is adjacent to "pop" and "dream pop") would allow partial credit and serve listeners with broad or overlapping tastes.
+
+**Language and region filtering.** The Kaggle catalog assigns genre labels based on Spotify's metadata, which can be inconsistent — a song tagged "anime" may be entirely in Spanish, and a user requesting "j-pop" may receive tracks from multiple countries. Adding language detection or a region filter would make the system significantly more useful for listeners who care about the language a song is sung in.
+
+**Context-aware sessions.** Supporting multiple "modes" per user (workout, focus, sleep, social) would let the system maintain separate weight vectors for different contexts and switch between them based on a simple signal at session start.
+
+**Collaborative signals.** The current system is purely content-based — it has no knowledge of what other users like. Adding a lightweight collaborative layer (e.g., "users with similar weight vectors also liked...") could surface songs that score low on features but are empirically well-liked by similar listeners.
+
+**Evaluation metric.** Right now there is no numeric measure of recommendation quality. Adding a held-out test set and measuring precision@k or NDCG over a set of labeled preferences would make it possible to compare algorithm changes objectively rather than relying on manual profile testing.
+
+---
+
+## 9. Personal Reflection
+
+Building v2 answered the question I left open at the end of v1: what would it actually take to make the weights non-fixed? It turned out to be less code than I expected — the perceptron update is about 5 lines — but the design decisions around *what* to update, *when*, and *how fast* took much more thought. The learning rate, the minimum weight floor, and the normalization step are all choices that meaningfully change how quickly the system responds to feedback versus how stable it is over time.
+
+The other big lesson was how much the preference elicitation step matters. In v1, a "bad" profile (like Genre Intruder) was something I constructed manually to expose a weakness. In v2, Claude sometimes extracts a preference that doesn't quite capture what the user meant — for instance, a user saying "upbeat but not intense" might get a high valence target but a low energy target, which are not the same thing. The quality of the conversation directly determines the quality of the starting point, and no amount of learning can fully recover from a badly initialized preference vector. That's a problem Spotify and every other real recommender faces too: cold-start is genuinely hard, and the interface you use to gather initial preferences is a core part of the system, not just a wrapper around it.
+
+The most surprising thing overall was how quickly the weight learning made Genre Intruder-style problems disappear on their own. In v1 I had to manually experiment to fix that bias. In v2 a few thumbs-downs on genre matches that missed on feel naturally pushed the genre weight down. Watching the bar chart shift in the Profile tab made the learning loop feel real in a way that I didn't expect from such a simple algorithm.
+
+Working with the Kaggle catalog also surfaced a limitation I hadn't considered before: genre labels in real datasets are messy and culturally inconsistent. A song tagged "anime" might be in Spanish; "pop" might mean K-pop, Latin pop, or American Top 40 depending on the metadata source. The system has no way to handle that — it treats genre as a clean label when the underlying data is far noisier than that. That's a gap I'd want to close in any real deployment.
