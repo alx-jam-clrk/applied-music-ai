@@ -18,9 +18,11 @@ The system is intended for personal use and educational exploration. It demonstr
 
 SpotiVibe v2 scores every song in the catalog against a user profile and returns the top matches. The pipeline has three stages.
 
-**Stage 1 — Preference Elicitation**
+**Stage 1 — Preference Elicitation with Guardrails**
 
 Instead of filling out a form, the user has a short conversation with a Claude AI assistant. Claude asks about genres, energy level, mood/vibe, acoustic preference, and tempo across 3–4 exchanges, then emits a structured JSON block with six numeric targets. This replaces the hardcoded `UserProfile` objects from v1 and allows preferences to be expressed naturally ("something to study to, not too intense") rather than as exact numbers.
+
+Two guardrails operate during this stage. First, Claude is instructed to only discuss music-related topics; off-topic questions are politely declined and redirected. Second, the full list of 119 valid genres from `catalog_meta.json` is injected into the system prompt; if the user requests a genre outside that list (e.g. "lofi", "synthwave", "phonk"), Claude explains it is not in the catalog and suggests the closest supported alternatives. As a second line of defence, `claude_client.validate_genres()` strips any unsupported genres that slip through the model before preferences are persisted.
 
 **Stage 2 — Content-Based Scoring**
 
@@ -54,7 +56,7 @@ Weights start at `[0.35, 0.20, 0.20, 0.10, 0.10, 0.05]` for genre, energy, valen
 
 The system ships with two catalogs:
 
-**Fallback catalog** (`data/songs.csv`) — 20 songs across 7 genres (pop, lofi, rock, ambient, synthwave, jazz, indie pop) and 6 moods (happy, chill, intense, relaxed, focused, moody). This is the same dataset from v1, retained for testing and offline use.
+**Fallback catalog** (`data/songs.csv`) — 20 songs across 7 genres and 6 moods (happy, chill, intense, relaxed, focused, moody). This is the same dataset from v1, retained for testing and offline use. Note that the genre labels in this file use informal names that may not match the 119-genre whitelist enforced during conversation; it is intended for development and offline testing only.
 
 **Full catalog** (`data/catalog.parquet`) — 81,343 songs sourced from the [Kaggle Spotify Tracks Dataset](https://www.kaggle.com/datasets/maharshipandya/-spotify-tracks-dataset), covering 118 genres. Each song has: title, artist, genre, energy, tempo (BPM), valence, danceability, and acousticness. The app uses this catalog when the parquet file is present, falling back to the CSV otherwise.
 
@@ -88,6 +90,8 @@ The 20-song fallback still reflects the same biases as v1: no hip-hop, R&B, clas
 
 **Preferences are session-constant.** The system assumes that once preferences are elicited, they stay fixed throughout the session. There is no support for context-dependent listening (e.g., "gym mode" vs. "winding down"). A user whose energy preference shifts mid-session has no way to signal that other than restarting the conversation.
 
+**Genre whitelist is narrow.** The 119 genres in the catalog cover Spotify's formal taxonomy but omit many informal or emerging terms that users naturally reach for — "lofi", "synthwave", "phonk", "bedroom pop", and many others will be rejected. Users unfamiliar with Spotify's genre vocabulary may find the system frustrating until they learn what terms are accepted.
+
 **Kaggle catalog biases.** The full catalog is sourced from Spotify streaming data, which over-represents mainstream genres and popular artists. Niche or regional music is underrepresented, so recommendations will systematically skew toward commercially popular styles even when other features match perfectly. The dataset also has no filter for language or region — a song's genre tag (e.g. "anime") reflects the style label assigned in Spotify's metadata, not the language the song is sung in or the culture it comes from. A user asking for "anime" music could receive songs entirely in Spanish, or a user requesting "pop" could receive tracks from any country. The system has no way to distinguish or respect those preferences.
 
 ---
@@ -96,11 +100,11 @@ The 20-song fallback still reflects the same biases as v1: no hip-hop, R&B, clas
 
 The same four adversarial profiles from v1 were re-run against v2 to benchmark the improvement.
 
-**The Impossible Profile** (`lofi, pop / chill / energy 0.35 / acoustic`): In v1, this profile was hardcoded and the weights were fixed. In v2, Claude correctly extracted the preferences from a natural description ("something soft and lo-fi to study to"). The recommendations surfaced lofi matches immediately. Unlike v1, when the user thumbed-down a genre match that felt too energetic, subsequent picks correctly deprioritized energy-heavy songs — the system learned rather than repeating the same mistake.
+**The Impossible Profile** (`chill, pop / relaxed / energy 0.35 / acoustic`): In v1, this profile was hardcoded and the weights were fixed. In v2, Claude correctly extracted the preferences from a natural description ("something soft and chill to study to") and mapped them to the supported `chill` genre. The recommendations surfaced matches immediately. Unlike v1, when the user thumbed-down a genre match that felt too energetic, subsequent picks correctly deprioritized energy-heavy songs — the system learned rather than repeating the same mistake.
 
-**The Energy Paradox** (`lofi / chill / energy 0.0 / acoustic`): v1 failed this profile because the composite energy formula couldn't reach 0.0, always disadvantaging true low-energy listeners. v2 separates energy, danceability, and tempo as independent features with independent weights, removing the forced composite. A user who dislikes high-danceability songs can now push that weight down without affecting the energy score.
+**The Energy Paradox** (`chill / relaxed / energy 0.0 / acoustic`): v1 failed this profile because the composite energy formula couldn't reach 0.0, always disadvantaging true low-energy listeners. v2 separates energy, danceability, and tempo as independent features with independent weights, removing the forced composite. A user who dislikes high-danceability songs can now push that weight down without affecting the energy score.
 
-**The Genre Intruder** (`synthwave / chill / energy 0.40 / acoustic`): This was the most important test in v1 — a single genre match dominated over every other signal. In v2 the starting genre weight is 0.35 (down from 0.40 in the rebalanced v1), and crucially, it shifts. After a few thumbs-downs on pure genre matches that missed on feel, the genre weight drops below 0.30 while energy and acousticness rise. The system self-corrects what previously required manual weight tuning.
+**The Genre Intruder** (`synth-pop / chill / energy 0.40 / acoustic`): This was the most important test in v1 — a single genre match dominated over every other signal. In v2 the starting genre weight is 0.35 (down from 0.40 in the rebalanced v1), and crucially, it shifts. After a few thumbs-downs on pure genre matches that missed on feel, the genre weight drops below 0.30 while energy and acousticness rise. The system self-corrects what previously required manual weight tuning.
 
 **The Valence Trap** (`jazz / happy / energy 0.40 / acoustic`): In v1 this exposed how valence similarity could silently inflate scores for songs with no mood label match. In v2, valence is an explicit top-level feature with its own weight, not buried inside a mood composite. The behavior is more interpretable — if valence is scoring a song high, the explanation says "mood/positivity fits" directly.
 
