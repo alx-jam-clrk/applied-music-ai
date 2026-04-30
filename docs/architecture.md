@@ -10,7 +10,7 @@ graph TD
     end
 
     subgraph Core["Core Modules"]
-        CC["claude_client.py\nchat()\nextract_preferences()"]
+        CC["claude_client.py\nchat()\nextract_preferences()\nvalidate_genres()"]
         REC["recommender.py\ncompute_feature_scores()\nscore_song()\nrecommend()\nexplain()"]
         UP["user_profile.py\nload_profile()\nsave_profile()\nupdate_weights()\nrecord_feedback()"]
         CAT["catalog.py\nload_catalog()\nload_catalog_meta()\nget_genres()\nget_tempo_bounds()"]
@@ -35,6 +35,7 @@ graph TD
     MAIN --> CAT
 
     CC --> API
+    CC --> META
     UP --> PROF
     CAT --> PQ
     CAT --> CSV
@@ -55,8 +56,10 @@ classDiagram
     }
 
     class ClaudeClient {
+        +VALID_GENRES : list
         +chat(messages, max_tokens) str
         +extract_preferences(text) dict
+        +validate_genres(prefs) tuple
     }
 
     class Recommender {
@@ -138,6 +141,9 @@ sequenceDiagram
     Claude-->>App: assistant reply
     App->>Claude: extract_preferences(reply)
     Claude-->>App: preferences dict (or None)
+    App->>Claude: validate_genres(prefs)
+    Claude-->>App: cleaned prefs + rejected genres list
+    Note over App: shows warning if any genres were rejected
 
     User->>App: Click "Get Recommendations"
     App->>Cat: load_catalog()
