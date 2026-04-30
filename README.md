@@ -34,7 +34,7 @@ When a user opens the app, they chat with a Claude AI assistant that asks about 
 
 ```json
 {
-  "favorite_genres": ["lofi", "indie pop"],
+  "favorite_genres": ["chill", "indie-pop"],
   "target_energy": 0.35,
   "target_valence": 0.55,
   "target_danceability": 0.45,
@@ -43,7 +43,14 @@ When a user opens the app, they chat with a Claude AI assistant that asks about 
 }
 ```
 
-### 2. Content-Based Scoring
+### 2. Content Guardrails
+
+Two guardrails are enforced at the prompt level, with a programmatic fallback as a second layer:
+
+- **Off-topic blocking** — Claude only discusses music: songs, artists, albums, genres, moods, and recommendations. Any off-topic question (sports, cooking, news, etc.) is politely declined and redirected to music discovery.
+- **Genre validation** — genres must come from the 119 entries in `data/catalog_meta.json`. If the user requests an unsupported genre (e.g. "lofi", "synthwave", "phonk"), Claude explains it isn't in the catalog and suggests the closest available options. As a programmatic safety net, `validate_genres()` in `claude_client.py` strips any unsupported genres that slip through before preferences are saved, and the UI surfaces a warning if anything was removed.
+
+### 3. Content-Based Scoring
 
 Each song in the catalog is scored against those preferences using six features:
 
@@ -56,7 +63,7 @@ Each song in the catalog is scored against those preferences using six features:
 
 The final score is a weighted dot product of these six scores and the user's current weight vector.
 
-### 3. Online Weight Learning
+### 4. Online Weight Learning
 
 After every thumbs-up or thumbs-down, the weights update using a perceptron rule:
 
@@ -82,7 +89,7 @@ applied-music-ai/
 │   ├── recommender.py      # Scoring engine
 │   ├── user_profile.py     # Profile persistence + weight learning
 │   ├── catalog.py          # Catalog loading and normalization
-│   └── claude_client.py    # Anthropic API wrapper
+│   └── claude_client.py    # Anthropic API wrapper + guardrails
 ├── data/
 │   ├── songs.csv           # 20-song fallback catalog
 │   ├── catalog.parquet     # 81k-song Kaggle catalog (optional)
@@ -217,15 +224,15 @@ pytest tests/test_recommender.py -v
 
 **Claude responds:**
 
-> "Nice! Study sessions call for the right vibe. Do you prefer something mellow and acoustic — like soft piano or lofi guitar — or more of a produced electronic sound like lofi beats or ambient synths? And how high should the energy be — pretty chill and quiet, or something with a bit more drive to keep you focused?"
+> "Nice! Study sessions call for the right vibe. Do you prefer something mellow and acoustic — like soft piano or folk guitar — or a more produced electronic sound like ambient synths or chill beats? And how high should the energy be — pretty quiet and relaxed, or something with a bit more drive to keep you focused?"
 
 **User:**
 
-> "Lofi beats, pretty chill. Maybe 6/10 energy."
+> "Chill beats, pretty relaxed. Maybe 4/10 energy."
 
 **Claude:**
 
-> "Lofi it is! Last thing — do you want something more upbeat and positive, a bit bittersweet in the middle, or leaning melancholy? And slow, medium, or faster tempo?"
+> "Chill it is! Last thing — do you want something more upbeat and positive, a bit bittersweet in the middle, or leaning melancholy? And slow, medium, or faster tempo?"
 
 **User:**
 
@@ -238,8 +245,8 @@ Great, pulling up your recommendations now!
 
 <preferences>
 {
-  "favorite_genres": ["lofi"],
-  "target_energy": 0.45,
+  "favorite_genres": ["chill"],
+  "target_energy": 0.40,
   "target_valence": 0.5,
   "target_danceability": 0.4,
   "likes_acoustic": false,
@@ -256,10 +263,10 @@ Initial weights `[0.35, 0.20, 0.20, 0.10, 0.10, 0.05]`:
 
 | # | Song | Artist | Score | Why |
 |---|---|---|---|---|
-| 1 | Rainfall Study | Lo-Fi Collective | 0.87 | genre matches (lofi), energy level fits, mood/positivity fits |
-| 2 | Midnight Drift | ChillBeats | 0.81 | genre matches (lofi), energy level fits |
+| 1 | Rainfall Study | Lo-Fi Collective | 0.87 | genre matches (chill), energy level fits, mood/positivity fits |
+| 2 | Midnight Drift | ChillBeats | 0.81 | genre matches (chill), energy level fits |
 | 3 | Soft Focus | Ambient Lab | 0.74 | energy level fits, mood/positivity fits, tempo fits |
-| 4 | Late Night Pages | StudyWave | 0.71 | genre matches (lofi) |
+| 4 | Late Night Pages | StudyWave | 0.71 | genre matches (chill) |
 | 5 | Hazy Afternoon | The Mellow | 0.68 | energy level fits, tempo fits |
 
 ---
@@ -324,15 +331,17 @@ Each feedback entry records the timestamp, song title, liked/disliked, feature s
 | **Personalization** | None — every user scored identically | Per-user weight vector persisted across sessions |
 | **Interface** | Terminal output | Streamlit web app with chat, picks, and profile views |
 | **Mood handling** | Fixed mood-valence map (hardcoded) | Continuous valence target extracted by Claude |
+| **Guardrails** | None | Off-topic blocking + genre whitelist enforced at prompt and code level |
 
 ---
 
 ## Limitations
 
 - Genre scoring is still binary — a song is either in the user's list or it is not; there is no partial credit for adjacent genres
+- Supported genres are limited to the 119 entries in `catalog_meta.json`; common informal terms like "lofi", "synthwave", or "phonk" are not in the catalog and will be rejected
 - Acousticness uses a fixed threshold of 0.5 to separate acoustic from electronic, which is arbitrary
 - The perceptron weight update is sensitive to early feedback — a few strong dislikes can shift weights significantly before the system has much signal
-- With the 20-song fallback catalog, genre coverage is narrow (pop, lofi, rock, ambient, synthwave, jazz, indie pop only)
+- With the 20-song fallback catalog, genre coverage is narrow and may not align with the 119-genre whitelist
 - Preferences are assumed stable within a session; there is no support for context-dependent recommendations (e.g., "workout mode" vs. "sleep mode")
 
 ---
