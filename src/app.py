@@ -14,7 +14,7 @@ import pandas as pd
 import streamlit as st
 
 from src.catalog import load_catalog
-from src.claude_client import chat, extract_preferences
+from src.claude_client import chat, extract_preferences, validate_genres
 from src.recommender import explain, recommend
 from src.user_profile import (
     DEFAULT_WEIGHTS,
@@ -112,6 +112,12 @@ with tab_chat:
 
             prefs = extract_preferences(reply)
             if prefs:
+                prefs, rejected = validate_genres(prefs)
+                if rejected:
+                    st.warning(
+                        f"Some genres aren't in our catalog and were removed: "
+                        f"{', '.join(rejected)}. Try again with supported genres!"
+                    )
                 profile.preferences = prefs
                 st.session_state.prefs_ready = True
 
